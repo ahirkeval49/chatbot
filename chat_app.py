@@ -1,25 +1,17 @@
 import streamlit as st
 import os
-import sys
-
-# 1) PATCH SQLITE3 WITH pysqlite3 (try/except to avoid KeyError)
-try:
-    import pysqlite3
-    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-except (ImportError, KeyError):
-    pass
-
-import chromadb
 import uuid
+import tempfile
 from langchain.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_groq import ChatGroq
+import chromadb
 
 ########################################
-# STREAMLIT CONFIG
+# STREAMLIT CONFIG & STYLING
 ########################################
 
-st.set_page_config(page_title="Doc Chatbot", page_icon=":books:", layout="centered")
+st.set_page_config(page_title="Document Chatbot", page_icon="📄", layout="centered")
 
 HIDE_FOOTER = """
 <style>
@@ -33,63 +25,87 @@ st.markdown(HIDE_FOOTER, unsafe_allow_html=True)
 ########################################
 
 def process_document(uploaded_file):
-    """Load PDF or text, chunk it, store in Chroma."""
+    """
+    Reads the uploaded PDF or text file, writes it to a temporary local file,
+    then loads and chunks its content for ChromaDB.
+    """
     try:
-        if uploaded_file.type == "application/pdf":
-            loader = PyPDFLoader(uploaded_file)  # Requires pypdf
-        else:
-            loader = TextLoader(uploaded_file, encoding="utf-8")
+        # 1. Create a temporary file for the uploaded document
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf" if uploaded_file.type == "application/pdf" else ".txt") as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())  # Write raw file bytes to temp file
+            temp_filepath = tmp_file.name
 
+        # 2. Select the appropriate loader
+        if uploaded_file.type == "application/pdf":
+            loader = PyPDFLoader(temp_filepath)
+        elif uploaded_file.type == "text/plain":
+            loader = TextLoader(temp_filepath, encoding="utf-8")
+        else:
+            st.error("Unsupported file type. Please upload a PDF or plain text file.")
+            return None
+
+        # 3. Load document content
         data = loader.load()
         raw_text = "\n".join([doc.page_content for doc in data])
 
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        # 4. Chunk the document
+        text_splitter = CharacterTextSplitter(separator="\n", chunk_size=1000, chunk_overlap=100)
         chunks = text_splitter.split_text(raw_text)
 
+        # 5. Store chunks in ChromaDB
         client = chromadb.PersistentClient(path="docstore")
         collection = client.get_or_create_collection(name="doc_collection")
-        # collection.delete(where={})  # If you want to clear old docs each time
-
+        
         for chunk in chunks:
             collection.add(
                 documents=chunk,
-                metadatas={"preview": chunk[:60]},
+                metadatas={"preview": chunk[:60]},  # Store preview metadata
                 ids=[str(uuid.uuid4())]
             )
+
         return collection
+
     except Exception as e:
         st.error(f"Error processing document: {e}")
         return None
 
+
 def answer_question(collection, query, groq_api_key, temperature=0.2, top_n=3):
-    """Retrieve top chunks from Chroma, use Groq to answer."""
+    """
+    Retrieves top N chunks from ChromaDB and uses Groq to generate an answer.
+    """
     try:
+        # Query the vector store for relevant chunks
         results = collection.query(query_texts=[query], n_results=top_n)
         if results["metadatas"]:
             retrieved_chunks = "\n\n".join([m["preview"] for m in results["metadatas"][0]])
         else:
             retrieved_chunks = ""
 
+        # Initialize Groq LLM
         llm = ChatGroq(
             temperature=temperature,
             groq_api_key=groq_api_key,
             model_name="llama-3.1-70b-versatile"
         )
 
+        # Prompt with context
         prompt_template = f"""
-        You are an AI assistant with context from a user-uploaded document:
+        You are an AI assistant with the following context from a user-uploaded document:
         {retrieved_chunks}
 
         The user asked: "{query}"
 
-        Provide the best answer using ONLY the context above. 
+        Provide the best possible answer using ONLY the context above. 
         If the context doesn't have an answer, say "I don't know."
         """
         response = llm.invoke(prompt_template)
         return response.content.strip()
+
     except Exception as e:
         st.error(f"Error generating answer: {e}")
         return "I encountered an error."
+
 
 ########################################
 # MAIN APP
@@ -97,31 +113,34 @@ def answer_question(collection, query, groq_api_key, temperature=0.2, top_n=3):
 
 def main():
     st.title("Document Chatbot (Groq)")
+    st.write("Upload a PDF or Text file, then ask questions about it!")
 
+    # 1. Retrieve your Groq API key from Streamlit secrets
     groq_api_key = st.secrets["general"]["GROQ_API_KEY"]
 
+    # 2. Manage session state for conversation and collection
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "collection" not in st.session_state:
         st.session_state.collection = None
 
-    # Button to clear conversation
+    # 3. Button to clear the conversation
     if st.button("Clear Conversation"):
         st.session_state.messages = []
         st.success("Conversation cleared.")
 
-    # Document upload
+    # 4. Document upload
     uploaded_file = st.file_uploader("Upload a PDF or Text file", type=["pdf", "txt"])
 
-    # Process doc
+    # Process the uploaded document
     if uploaded_file and st.button("Process Document"):
-        with st.spinner("Processing..."):
-            coll = process_document(uploaded_file)
-            if coll:
-                st.session_state.collection = coll
-                st.success("Document processed & stored!")
+        with st.spinner("Processing document..."):
+            collection = process_document(uploaded_file)
+            if collection:
+                st.session_state.collection = collection
+                st.success("Document processed and stored!")
 
-    # Ask question
+    # 5. Handle user questions
     user_query = st.text_input("Your question:", "")
     if st.button("Send Question"):
         if not st.session_state.collection:
@@ -129,7 +148,10 @@ def main():
         elif not user_query.strip():
             st.warning("Cannot send an empty query.")
         else:
+            # Add user question
             st.session_state.messages.append(("user", user_query))
+
+            # Get the AI's answer
             answer = answer_question(
                 st.session_state.collection,
                 user_query,
@@ -137,13 +159,14 @@ def main():
             )
             st.session_state.messages.append(("assistant", answer))
 
-    # Display conversation
+    # 6. Display the conversation
     st.write("---")
     for role, text in st.session_state.messages:
         if role == "user":
             st.markdown(f"**You:** {text}")
         else:
             st.markdown(f"**Groq:** {text}")
+
 
 if __name__ == "__main__":
     main()
