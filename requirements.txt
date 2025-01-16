@@ -7,3 +7,5 @@ pysqlite3-binary
 PyPDF2
 pypdf
 requests
+openpyxl
+python-docx
