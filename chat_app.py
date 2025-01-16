@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import uuid
 import tempfile
-from langchain.document_loaders import PyPDFLoader, TextLoader
+from langchain.document_loaders import PyPDFLoader, TextLoader, UnstructuredWordDocumentLoader, UnstructuredExcelLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_groq import ChatGroq
 import chromadb
@@ -26,22 +26,27 @@ st.markdown(HIDE_FOOTER, unsafe_allow_html=True)
 
 def process_document(uploaded_file):
     """
-    Reads the uploaded PDF or text file, writes it to a temporary local file,
-    then loads and chunks its content for ChromaDB.
+    Reads the uploaded document (PDF, text, Word, or Excel), writes it to a 
+    temporary local file, then loads and chunks its content for ChromaDB.
     """
     try:
         # 1. Create a temporary file for the uploaded document
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf" if uploaded_file.type == "application/pdf" else ".txt") as tmp_file:
+        file_extension = os.path.splitext(uploaded_file.name)[-1].lower()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
             tmp_file.write(uploaded_file.getvalue())  # Write raw file bytes to temp file
             temp_filepath = tmp_file.name
 
-        # 2. Select the appropriate loader
-        if uploaded_file.type == "application/pdf":
+        # 2. Select the appropriate loader based on file type
+        if file_extension == ".pdf":
             loader = PyPDFLoader(temp_filepath)
-        elif uploaded_file.type == "text/plain":
+        elif file_extension == ".txt":
             loader = TextLoader(temp_filepath, encoding="utf-8")
+        elif file_extension in [".docx", ".doc"]:
+            loader = UnstructuredWordDocumentLoader(temp_filepath)
+        elif file_extension in [".xlsx", ".xls"]:
+            loader = UnstructuredExcelLoader(temp_filepath)
         else:
-            st.error("Unsupported file type. Please upload a PDF or plain text file.")
+            st.error(f"Unsupported file type: {file_extension}. Supported types: PDF, TXT, DOCX, XLSX.")
             return None
 
         # 3. Load document content
@@ -113,7 +118,7 @@ def answer_question(collection, query, groq_api_key, temperature=0.2, top_n=3):
 
 def main():
     st.title("Document Chatbot (Groq)")
-    st.write("Upload a PDF or Text file, then ask questions about it!")
+    st.write("Upload a document (PDF, Word, Excel, or Text), then ask questions about it!")
 
     # 1. Retrieve your Groq API key from Streamlit secrets
     groq_api_key = st.secrets["general"]["GROQ_API_KEY"]
@@ -130,7 +135,7 @@ def main():
         st.success("Conversation cleared.")
 
     # 4. Document upload
-    uploaded_file = st.file_uploader("Upload a PDF or Text file", type=["pdf", "txt"])
+    uploaded_file = st.file_uploader("Upload a document", type=["pdf", "txt", "docx", "xlsx"])
 
     # Process the uploaded document
     if uploaded_file and st.button("Process Document"):
