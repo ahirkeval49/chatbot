@@ -1,5 +1,5 @@
 import streamlit as st
-from langchain_community.document_loaders import TextBaseLoader, PDFBaseLoader
+from langchain.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_groq import ChatGroq
 
