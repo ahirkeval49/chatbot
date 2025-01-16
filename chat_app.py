@@ -5,6 +5,9 @@ import tempfile
 from langchain.document_loaders import PyPDFLoader, TextLoader, UnstructuredWordDocumentLoader, UnstructuredExcelLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_groq import ChatGroq
+import os
+os.environ["CHROMA_SQLITE_ALLOW_UNSAFE"] = "1"
+
 import chromadb
 
 ########################################
