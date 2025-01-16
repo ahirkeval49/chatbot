@@ -5,4 +5,5 @@ langchain-groq
 chromadb
 pysqlite3-binary
 PyPDF2
+pypdf
 requests
