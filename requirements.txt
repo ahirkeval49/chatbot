@@ -6,4 +6,11 @@ chromadb
 pysqlite3-binary
 PyPDF2
 requests
-
+streamlit==1.28.0
+langchain==0.0.345
+langchain-groq==0.2.3
+chromadb==0.3.29
+pysqlite3-binary==0.5.0
+PyPDF2==3.0.1
+requests==2.31.0
+tiktoken==0.3.3
